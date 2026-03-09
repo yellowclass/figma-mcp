@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: figma-mcp
+  namespace: figma-mcp
+  labels:
+    app: figma-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app: figma-mcp
+  ports:
+    - port: 80
+      targetPort: 3100
+      protocol: TCP
+      name: http

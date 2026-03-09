@@ -1,0 +1,20 @@
+apiVersion: projectcontour.io/v1
+kind: HTTPProxy
+metadata:
+  name: figma-mcp
+  namespace: figma-mcp
+spec:
+  virtualhost:
+    fqdn: <FQDN>
+    tls:
+      secretName: <WILDCARD_TLS_SECRET_NAME>
+  routes:
+    - conditions:
+        - prefix: /
+      services:
+        - name: figma-mcp
+          port: 80
+      timeoutPolicy:
+        response: "3600s"
+        idle: "3600s"
+      enableWebsockets: true

@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: figma-mcp
+  namespace: figma-mcp
+  labels:
+    app: figma-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: figma-mcp
+  template:
+    metadata:
+      labels:
+        app: figma-mcp
+    spec:
+      containers:
+        - name: figma-mcp
+          image: ivypods/figma-mcp:new
+          ports:
+            - containerPort: 3100
+              name: http
+          env:
+            - name: PORT
+              value: "3100"
+            - name: NODE_ENV
+              value: "production"
+            - name: MCP_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: figma-mcp-secrets
+                  key: MCP_AUTH_TOKEN
+            - name: FIGMA_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: figma-mcp-secrets
+                  key: FIGMA_OAUTH_CLIENT_ID
+            - name: FIGMA_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: figma-mcp-secrets
+                  key: FIGMA_OAUTH_CLIENT_SECRET
+            - name: FIGMA_OAUTH_REFRESH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: figma-mcp-secrets
+                  key: FIGMA_OAUTH_REFRESH_TOKEN
+            - name: OTEL_SERVICE_NAME
+              value: "figma-mcp-server"
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: "<OTEL_EXPORTER_OTLP_TRACES_ENDPOINT>:4318/v1/traces"
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: "<OTEL_EXPORTER_OTLP_METRICS_ENDPOINT>:3130/api/metrics/v1/save/otlp"
+            - name: OTEL_METRICS_EXPORTER
+              value: "otlp"
+            - name: OTEL_EXPORTER_OTLP_COMPRESSION
+              value: "gzip"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "cube.environment=production"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      restartPolicy: Always
