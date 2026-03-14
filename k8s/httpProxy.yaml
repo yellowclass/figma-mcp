@@ -5,6 +5,7 @@ metadata:
   namespace: figma-mcp
 spec:
   virtualhost:
+    # Set your FQDN (e.g. figma-mcp.example.com)
     fqdn: <FQDN>
     tls:
       secretName: <WILDCARD_TLS_SECRET_NAME>

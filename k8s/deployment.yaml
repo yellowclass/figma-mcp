@@ -17,7 +17,9 @@ spec:
     spec:
       containers:
         - name: figma-mcp
-          image: ivypods/figma-mcp:new
+          # Set after building: docker build -t figma-mcp-server:latest .
+          # e.g. ghcr.io/myorg/figma-mcp-server:latest
+          image: <IMAGE_NAME>
           ports:
             - containerPort: 3100
               name: http
