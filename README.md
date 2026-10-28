@@ -1,81 +1,71 @@
-# Figma MCP relay
+# Shared-account Figma MCP proxy
 
-A shared relay to Figma's hosted MCP, with one dedicated Figma identity per Zivon org. Clients only invite `developer+<zivon-org-slug>@iypods.com` to their workspace/project with the required file permissions. Zivon operations creates the account, accepts the invitation, authorizes it and configures the connection. Invitation alone does not create OAuth credentials. Each alias must be a separate Figma account; a second token for the same account does not restrict that account's access.
+Clients invite **harshita@ivypods.com** to their Figma files. Operations accepts the invitation and approves the file URLs for the correct Zivon org in the Figma settings panel. The proxy reuses the existing account authorization. No alias account, per-org OAuth consent, credential export or per-org setup script is needed.
 
-## Operations setup
+An invitation alone is not an org ownership proof. Platform operations must verify the client/file association before approving it. Customers cannot assign arbitrary file keys to themselves. This version approves **individual files**, not entire workspaces or projects.
 
-1. Create/sign into the dedicated Figma account, accept the client's invitation and verify its file access and required Figma seat. Keep this account out of other clients' workspaces.
-2. Authorize that account with the supported Figma MCP OAuth client/registration used by your deployment. If using the existing Claude bootstrap, authenticate in a separate ops profile per account. Verify the signed-in Figma account before exporting credentials; the setup endpoint validates the declared email, not Figma's identity behind a token. Never assume client ID and secret are shared between registrations.
-3. Prepare a private JSON file (mode `0600`) with the complete authorization:
+## Enforcement
 
-```json
-{
-  "accountEmail": "developer+acme@iypods.com",
-  "clientId": "<OAuth registration client ID>",
-  "clientSecret": "<OAuth registration client secret>",
-  "refreshToken": "<refresh token issued for this account>"
-}
-```
+- Core stores an exclusive file-to-org registry. A Mongo transaction reserves every file at its unique `_id` and saves the policy; a conflicting claim rolls back the entire update. A file cannot belong to two orgs.
+- Core generates a separate encrypted relay token per org. This is a Zivon access credential, not a Figma OAuth grant.
+- Every SSE connection and message POST authenticates against Core. The policy endpoint requires both the dedicated service secret and the org token, checks the authoritative file bindings, and returns only the approved file keys/revision.
+- The proxy validates every file key, exposes only explicitly reviewed tools and arguments, and keeps sessions scoped to the org/file. Policy changes invalidate existing client sessions. Missing policies and Core failures block access.
+- The shared Figma OAuth credentials and raw upstream relay token never reach a tenant or its agent. The existing upstream relay is the only process refreshing that account's authorization.
+- Shared-mode Core credential responses omit old console/file-opener/library/project credentials; changing an org to shared mode removes those legacy configuration paths and its per-org OAuth fields.
+- The existing gateway/orchestrator Figma broker still authenticates the human, applies EAP tool permissions and audits calls. File restrictions remain enforced by this proxy even if tool-policy enforcement is in shadow mode.
 
-4. Set `CORE_INTERNAL_URL`, `FIGMA_RELAY_SERVICE_SECRET` and `FIGMA_RELAY_BASE_URL` in your ops environment. Core must be reached through its private service or an authenticated tunnel. The relay base URL is the HTTPS origin without a path. Run from this repo:
+A shared identity has a larger blast radius than separate Figma accounts: compromising that identity or the server holding its credentials can reach all files shared with it. This proxy isolates tenants' normal Zivon access; it does not change the account's permissions inside Figma.
 
-```sh
-node scripts/configure-org.mjs acme /private/path/acme.credentials.json
-```
+## Available tools
 
-The command saves encrypted OAuth credentials in Core's `organisations.integrations`, generates an org-specific relay token, sets `figma_mcp_url` to `https://<relay>/orgs/acme/sse`, and synchronizes the existing Figma catalogue row/admission. It returns non-secret setup metadata. No credential needs to be passed to the client. Re-run to reauthorize the account or repair catalogue synchronization; managed connections retain their relay token. Migrating an old global connection generates a new token.
+Read tools: `get_metadata`, `get_screenshot`, `get_design_context` (Code Connect forcibly disabled), `get_variable_defs`, `get_motion_context`, `get_figjam`, `download_assets`. `upload_assets` targets approved files only, with batch commit disabled.
 
-The ops bootstrap can export the authorization without printing secrets:
+`edit_canvas` creates/edits frames, rectangles, ellipses, text and auto layout, reparents nodes and removes nodes inside an approved file. Its input is a bounded array of typed operations; the proxy generates the only JavaScript sent upstream. Arbitrary JavaScript, dynamic property names, image hashes, component imports and network/account APIs are not accepted. Text creation uses Inter Regular. Operations can partially apply before a later Figma failure; inspect the file before retrying a write.
 
-```sh
-./scripts/setup-figma-oauth.sh acme /private/path/acme.credentials.json
-```
+Account-wide identity/library/Weave/shader/plugin tools, raw `use_figma`, direct session handles, generic resource reads, capture/video job tools, HTML capture and unscoped file creation are unavailable. Unknown upstream tools and arguments are blocked. Tools requiring new, unreviewed arguments are hidden until reviewed. These restrictions are intentional: forwarding the original full tool inventory with a shared identity would not provide org isolation.
 
-Use a separate `CLAUDE_CONFIG_DIR` per dedicated account. The exporter refuses ambiguous Figma entries, requires a refresh token, writes with mode `0600`, and refuses to overwrite a prior export. `FIGMA_OAUTH_ENTRY_KEY` can explicitly select an entry if needed. The operator must still verify the Figma identity in the browser before export.
+## Operations UI
 
-The settings panel shows the invite address and leaves existing render relay settings under advanced connection settings. This change configures the hosted MCP; it does not provision any separate render relay, file opener or Figma runner.
+In the org's Figma settings, a platform SUPER_ADMIN sees **Operations: approved Figma files**. Paste verified file URLs/keys (one per line) and save. Saving an empty list disconnects the org and releases its file assignments. Customers see the shared invite address, connection status and their approved file links; they cannot edit the registry.
 
-## Deploy
+Core routes:
 
-Configure `TOKEN_ENCRYPTION_KEY` and the dedicated `FIGMA_RELAY_SERVICE_SECRET` in Core. The new endpoints refuse plaintext storage when encryption is disabled. Do not reuse a secret distributed to agent runtimes. Deploy Core first, then build the relay image (the Dockerfile includes `upstream.mjs` and `tenants.mjs`). Update the image reference to the newly built tag; the existing deployment's image tag does not contain this implementation.
+- `GET /api/orgs/{slug}/figma/shared-policy`: non-secret status for org managers/platform operations.
+- `GET/PUT /api/SUPER_ADMIN/orgs/{slug}/figma-policy`: operations configuration; exact SUPER_ADMIN required by the handlers.
+- `PUT /internal/orgs/{slug}/figma-policy`: operations service configuration `{ "files": ["https://www.figma.com/design/<key>/..."] }`, guarded by `FIGMA_RELAY_SERVICE_SECRET`.
+- `GET /internal/orgs/{slug}/figma-policy`: proxy lookup, additionally requiring `X-Figma-Relay-Token`; returns `{mode:"shared",fileKeys:[...],revision:"..."}` without account credentials.
 
-Multi-tenant environment:
+`FIGMA_SHARED_ACCOUNT_EMAIL` defaults to `harshita@ivypods.com`. Core's `FIGMA_SHARED_RELAY_BASE_URL` defaults to `https://figma-mcp.zivon.ai`. `TOKEN_ENCRYPTION_KEY` must be configured. Core exposes the usual org-scoped Figma catalogue entry and `FIGMA_MCP_URL`/`FIGMA_MCP_AUTH_TOKEN` to the existing orchestrator flow.
+
+## Runtime configuration
+
+The policy proxy requires:
 
 | Variable | Purpose |
 | --- | --- |
-| `PORT` | HTTP listener, e.g. `3100` |
-| `CORE_INTERNAL_URL` | Private Core service origin |
-| `FIGMA_RELAY_SERVICE_SECRET` | Dedicated secret configured in Core; never injected into agent runtimes |
+| `PORT` | HTTP listener, usually 3100 |
+| `CORE_INTERNAL_URL` | Private Core origin |
+| `FIGMA_RELAY_SERVICE_SECRET` | Same dedicated secret as Core's policy endpoints |
+| `FIGMA_SHARED_RELAY_URL` | Fixed internal URL of the existing account relay, e.g. `http://figma-mcp.figma-mcp.svc.cluster.local/sse` |
+| `FIGMA_SHARED_RELAY_TOKEN` | Server-only credential for that upstream relay |
 
-Create a Kubernetes Secret named `figma-mcp-core-auth` in the `figma-mcp` namespace containing `FIGMA_RELAY_SERVICE_SECRET` through your existing secret-management workflow. Review the Core service URL in `k8s/multi-tenant.patch.yaml`, then apply that strategic merge patch to the existing deployment. It preserves telemetry and scheduling settings, removes the global Figma credentials, and uses `Recreate` with one replica.
+Never configure the shared URL without Core or omit the shared relay token: startup fails rather than falling back to an unrestricted identity. `/health` reports `mode:"shared-account"`. Clients use `/orgs/<slug>/sse`; the public proxy has no unscoped `/sse` endpoint. `/orgs/<slug>/messages` is owned by the authenticated org/session.
 
-**Run one relay process/replica.** Refresh coordination and SSE sessions are in process memory. Do not enable rolling overlap, HPA or multiple replicas until refresh locking/access-token sharing and SSE routing are implemented across replicas. A restart closes active sessions; clients reconnect. Recreate avoids old/new relay processes refreshing the same authorization simultaneously.
+Run one policy-proxy replica with **Recreate**; SSE connections live in memory. The existing upstream account relay also remains a single process. Multiple replicas require deliberate session routing and cleanup; this change does not add that.
 
-Runtime baseline: use the literal `@staging` branches of Core, Envoy, gateway and orchestrator. They already mount `GET /api/orgs/{slug}/mcp/figma` and `POST .../mcp/figma/*`. The orchestrator fetches each org's existing relay URL/token, filters tools through its Figma MCPGuard, and rewrites the relay's announced message endpoint. The org-specific `/orgs/<slug>/messages` endpoint fits that existing wildcard route; no runtime credential exposure is needed. Older `master` gateway/orchestrator checkouts lack this broker.
+## Production cutover (once for the platform)
 
-In multi-tenant mode `/sse` is absent. Connections use `/orgs/<slug>/sse` and their org's `FIGMA_MCP_AUTH_TOKEN`, which Core already supplies through Zivon's existing credential flow. The SSE endpoint advertises `/orgs/<slug>/messages?sessionId=...`. Route both paths through your ingress. `/health` reports process health, not whether each account has Figma permission.
+1. Merge/deploy the companion Core changes before switching the proxy. Preserve `FIGMA_RELAY_SERVICE_SECRET` in the existing AWS/External Secrets setup.
+2. In operations UI, approve the verified files for **every existing org**, including those currently pointing at the unrestricted relay. Core creates their new org tokens, updates their URLs and drops legacy bypass fields. Do not infer file ownership from an agent-provided URL or a workspace display name.
+3. Rotate the upstream `MCP_AUTH_TOKEN` in the existing private secret through your normal secret-management workflow. Any previously exposed global relay token must become invalid. Rotate credentials for any other legacy direct Figma service before treating it as private.
+4. Restart the old account relay with one replica/Recreate so it reads the new token. Restart/deploy this policy proxy with the same new token reference. Existing connections will need to reconnect through their org-specific broker URL.
+5. Apply `k8s/shared-account/resources.yaml` after setting its reviewed image tag. It configures the shared proxy, existing service-secret reference and HTTPS route, and repoints the old SpeakX public hostname to the guarded proxy. Unrestricted `/sse` calls then fail closed. The raw upstream account relay must remain server-only; do not publish its credential or allow tenants to bypass the policy proxy.
+6. Verify health, missing/invalid token rejection, allowed file access, and denied cross-org file/tool/session attempts before inviting additional clients to the shared account.
 
-Do not configure a fallback identity. Missing Core credentials, invalid org tokens, revoked connections and Core outages fail closed. Clear the org's existing `figma_mcp_auth_token` in Core to revoke relay access. Reauthorize with the ops command to replace OAuth credentials; existing sessions then need to reconnect.
+Production uses `aws-zivon-prod`, the `figma-mcp` namespace and `v2-zivon-core-service.zivon.svc.cluster.local`. The operations acceptance of email invitations is still manual; no Harshita mailbox integration was provisioned by this change. Customers should invite the base address, not `harshita+<org>@ivypods.com`.
 
-Legacy mode remains available when `CORE_INTERNAL_URL` is absent: the original `FIGMA_OAUTH_*`/`FIGMA_ACCESS_TOKEN` environment variables and `MCP_AUTH_TOKEN` operate one account over `/sse`, or stdio without `PORT`. Keep this mode separate from a multi-tenant deployment.
+## Compatibility and validation
 
-## Internal Core API
+The old dedicated-account credential API and exporter scripts remain solely for rollback/compatibility; the shared UI and proxy do not use them. An org in shared mode cannot read a dedicated OAuth bundle. Legacy single-account stdio/HTTP behavior remains the private upstream; it must not be exposed as the multi-tenant boundary.
 
-All methods on `/internal/orgs/{slug}/figma-credentials` enforce `X-Internal-Secret`:
-
-- `PUT`: operations setup with the single-account bundle, `accountEmail` and `relayBaseUrl`. Secrets are encrypted and excluded from customer settings/reveal/audit values and general credential registries.
-- `GET`: relay credential lookup; additionally requires the org's `X-Figma-Relay-Token`. Returns only that org's OAuth bundle, with `Cache-Control: no-store`.
-- `POST`: persist refresh-token rotation, authenticated as above, with `{previous: {clientId, clientSecret, refreshToken}, refreshToken}`. Uses a Mongo ciphertext snapshot to avoid overwriting a newer authorization. Repeating a completed rotation is idempotent.
-
-The relay authenticates against Core on every SSE connection and message POST. Upstream access tokens, sessions, tools and refresh promises are isolated per org. Concurrent refreshes within the process share one operation. Returned refresh tokens are persisted before using the new access token. If persistence fails, the pending rotation remains in memory and is retried before another OAuth refresh. A crash during the provider-to-Core rotation window can still require ops reauthorization; there is no atomic transaction spanning Figma and MongoDB.
-
-The OAuth client registration must support your deployed SaaS integration; this relay does not change Figma's registration, permissions or seat requirements.
-
-## Validation
-
-```sh
-npm ci
-npm test
-```
-
-Tests use real MCP SSE clients against the relay and mocked Figma responses: org/session isolation, revocation, reauthorization, credential outages, refresh serialization, rotation persistence and legacy 401 recovery. Core has complementary tests for service authentication, encrypted setup, disclosure boundaries and stale rotations. No live Figma account is touched by tests.
+`npm ci && npm test` runs the old relay tests and the new shared-account security tests: real MCP SSE clients, cross-org/file/session attempts, revocation, unknown tools/arguments, ownership-policy failures, and generated-code injection tests. Companion Core tests exercise authorization, non-disclosure, file claiming and transaction commit/abort paths. No production client file is modified by these tests.
