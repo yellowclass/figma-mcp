@@ -1,0 +1,8 @@
+# kubectl --context aws-zivon-prod -n figma-mcp patch deployment figma-mcp \
+#   --type=merge --patch-file=k8s/shared-account/legacy-strategy-patch.yaml
+# A single OAuth refresher must stop before its replacement starts.
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
