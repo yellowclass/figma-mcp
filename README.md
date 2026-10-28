@@ -35,6 +35,19 @@ Use a separate `CLAUDE_CONFIG_DIR` per dedicated account. The exporter refuses a
 
 The settings panel shows the invite address and leaves existing render relay settings under advanced connection settings. This change configures the hosted MCP; it does not provision any separate render relay, file opener or Figma runner.
 
+## Production hosting
+
+The shared org-scoped service in `aws-zivon-prod` uses `https://figma-mcp.zivon.ai`. Its complete manifests are in `k8s/prod-multitenant/resources.yaml`:
+
+```sh
+kubectl --context aws-zivon-prod apply -f k8s/prod-multitenant/resources.yaml
+kubectl --context aws-zivon-prod -n figma-mcp rollout status deployment/figma-mcp-multitenant
+```
+
+It runs alongside the existing `figma-mcp` deployment and `speakx-mcp-figma.zivon.ai` endpoint. The shared service has one replica with Recreate strategy, no global Figma account credentials, and reaches `v2-zivon-core-service` privately. External Secrets reads the dedicated service key from `zivon/prod/figma-mcp-core-auth`; Core receives the same key through `zivon/prod/v2-zivon-core`. No secret values belong in Git.
+
+For org onboarding, set `FIGMA_RELAY_BASE_URL=https://figma-mcp.zivon.ai` and use the operations setup above. Existing clients on the legacy endpoint are migrated only after their dedicated Figma account is authorized; deploying hosting alone does not create per-client OAuth authorizations.
+
 ## Deploy
 
 Configure `TOKEN_ENCRYPTION_KEY` and the dedicated `FIGMA_RELAY_SERVICE_SECRET` in Core. The new endpoints refuse plaintext storage when encryption is disabled. Do not reuse a secret distributed to agent runtimes. Deploy Core first, then build the relay image (the Dockerfile includes `upstream.mjs` and `tenants.mjs`). Update the image reference to the newly built tag; the existing deployment's image tag does not contain this implementation.
