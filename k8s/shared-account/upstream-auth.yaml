@@ -1,0 +1,21 @@
+# Merge only the private transport token into the existing OAuth secret.
+# Existing OAuth credentials are preserved and remain owned by the account relay.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: figma-mcp-upstream-auth
+  namespace: figma-mcp
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  target:
+    name: figma-mcp-secrets
+    creationPolicy: Merge
+    deletionPolicy: Retain
+  data:
+    - secretKey: MCP_AUTH_TOKEN
+      remoteRef:
+        key: figma-mcp-upstream-auth
+        property: MCP_AUTH_TOKEN
