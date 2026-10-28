@@ -5,7 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
-COPY server.mjs upstream.mjs tenants.mjs instrumentation.mjs ./
+COPY server.mjs upstream.mjs tenants.mjs shared.mjs canvas.mjs instrumentation.mjs ./
 
 ENV NODE_ENV=production
 ENV PORT=3100
