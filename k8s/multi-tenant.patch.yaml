@@ -1,0 +1,31 @@
+# Strategic merge patch: kubectl -n figma-mcp patch deployment figma-mcp
+#   --type strategic --patch-file k8s/multi-tenant.patch.yaml
+# Create figma-mcp-core-auth first, containing FIGMA_RELAY_SERVICE_SECRET (same dedicated value as Core).
+# Verify CORE_INTERNAL_URL for the target cluster before applying.
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  template:
+    spec:
+      containers:
+        - name: figma-mcp
+          env:
+            - name: CORE_INTERNAL_URL
+              value: http://zivon-core-service.zivon.svc.cluster.local:80
+            - name: FIGMA_RELAY_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: figma-mcp-core-auth
+                  key: FIGMA_RELAY_SERVICE_SECRET
+            - name: MCP_AUTH_TOKEN
+              $patch: delete
+            - name: FIGMA_OAUTH_CLIENT_ID
+              $patch: delete
+            - name: FIGMA_OAUTH_CLIENT_SECRET
+              $patch: delete
+            - name: FIGMA_OAUTH_REFRESH_TOKEN
+              $patch: delete
+            - name: FIGMA_ACCESS_TOKEN
+              $patch: delete

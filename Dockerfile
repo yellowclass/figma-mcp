@@ -2,10 +2,10 @@ FROM node:20-slim
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
 
-COPY server.mjs instrumentation.mjs ./
+COPY server.mjs upstream.mjs tenants.mjs instrumentation.mjs ./
 
 ENV NODE_ENV=production
 ENV PORT=3100
