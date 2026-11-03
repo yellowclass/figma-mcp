@@ -8,6 +8,7 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import { createBridge } from "./upstream.mjs";
 import { CoreCredentials, HttpError, TenantRegistry } from "./tenants.mjs";
 import { CorePolicies, SharedRegistry, createSharedBridge } from "./shared.mjs";
+import { fileCreator } from "./creation.mjs";
 
 const digest = (value) => createHash("sha256").update(value).digest();
 const equal = (a, b) => !!a && !!b && timingSafeEqual(digest(a), digest(b));
@@ -31,11 +32,9 @@ export function createHttpApp({
     Promise.resolve(fn(req, res, next)).catch((error) => {
       onError(error);
       if (!res.headersSent)
-        res
-          .status(error.status || 502)
-          .json({
-            error: error.status ? error.message : "Figma connection failed",
-          });
+        res.status(error.status || 502).json({
+          error: error.status ? error.message : "Figma connection failed",
+        });
       else res.end();
     });
   const auth = handle(async (req, res, next) => {
@@ -137,9 +136,10 @@ async function main() {
     });
     registry = new SharedRegistry({
       core,
-      createBridge: (policy) =>
+      createBridge: (policy, { slug, token }) =>
         createSharedBridge({
           policy,
+          createFile: fileCreator(core, slug, token),
           upstreamUrl: sharedUrl,
           upstreamToken: process.env.FIGMA_SHARED_RELAY_TOKEN,
         }),
