@@ -69,3 +69,15 @@ Production uses `aws-zivon-prod`, the `figma-mcp` namespace and `v2-zivon-core-s
 The old dedicated-account credential API and exporter scripts remain solely for rollback/compatibility; the shared UI and proxy do not use them. An org in shared mode cannot read a dedicated OAuth bundle. Legacy single-account stdio/HTTP behavior remains the private upstream; it must not be exposed as the multi-tenant boundary.
 
 `npm ci && npm test` runs the old relay tests and the new shared-account security tests: real MCP SSE clients, cross-org/file/session attempts, revocation, unknown tools/arguments, ownership-policy failures, and generated-code injection tests. Companion Core tests exercise authorization, non-disclosure, file claiming and transaction commit/abort paths. No production client file is modified by these tests.
+
+## Export the shared account from current Claude Code
+
+On macOS, Claude may store OAuth credentials in Keychain (`Claude Code-credentials`) instead of `~/.claude/.credentials.json`. The Figma plugin entry is supported alongside `figma-remote-mcp`. No downgrade is needed.
+
+Authenticate Figma from Claude’s `/mcp`, then run:
+
+```sh
+bash scripts/setup-figma-oauth.sh developer@ivypods.com /private/tmp/figma-developer-new.credentials.json
+```
+
+The helper verifies `whoami` using the existing access token, checks the expected email, and exports only the Figma client ID, client secret and refresh token to a new mode-0600 JSON file. It refuses ambiguity, account mismatch and overwrite. It never prints tokens, exports Claude login credentials, refreshes authorization or updates the cluster. Expired access requires reconnecting Figma in Claude first. The existing `export-oauth.mjs` remains a compatibility tool for the older dedicated-account flow.
