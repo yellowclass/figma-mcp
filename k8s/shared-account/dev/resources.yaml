@@ -1,4 +1,4 @@
-# Dev policy and intent storage use dev Core. OAuth remains on one account relay.
+# Fully independent dev policy proxy and private dev account relay.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -26,7 +26,7 @@ spec:
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: figma-mcp-upstream-auth
+  name: figma-mcp-secrets
   namespace: figma-mcp
 spec:
   refreshInterval: 1h
@@ -34,13 +34,93 @@ spec:
     kind: ClusterSecretStore
     name: aws-secrets-manager
   target:
-    name: figma-mcp-upstream-auth
+    name: figma-mcp-secrets
     creationPolicy: Owner
-  data:
-    - secretKey: MCP_AUTH_TOKEN
-      remoteRef:
-        key: figma-mcp-upstream-auth
-        property: MCP_AUTH_TOKEN
+  dataFrom:
+    - extract:
+        key: figma-mcp-secrets
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: figma-mcp
+  namespace: figma-mcp
+  labels:
+    app: figma-mcp
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: figma-mcp
+  template:
+    metadata:
+      labels:
+        app: figma-mcp
+    spec:
+      automountServiceAccountToken: false
+      tolerations:
+        - key: app
+          operator: Equal
+          value: zivon-apps
+          effect: NoSchedule
+      containers:
+        - name: figma-mcp
+          image: 422271169195.dkr.ecr.ap-south-1.amazonaws.com/ivypods/figma-mcp:1f89ea6@sha256:2efeab80783cddb85546665c7ce5f8a4663865c391934c5bed985847d108adf1
+          ports:
+            - name: http
+              containerPort: 3100
+          envFrom:
+            - secretRef:
+                name: figma-mcp-secrets
+          env:
+            - name: PORT
+              value: "3100"
+            - name: NODE_ENV
+              value: production
+            - name: OTEL_SERVICE_NAME
+              value: figma-mcp-account-relay
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: cube.environment=development
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://cubeapm.cubeapm.svc.cluster.local:4318/v1/traces
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://cubeapm.cubeapm.svc.cluster.local:3130/api/metrics/v1/save/otlp
+            - name: OTEL_METRICS_EXPORTER
+              value: otlp
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: figma-mcp
+  namespace: figma-mcp
+spec:
+  selector:
+    app: figma-mcp
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -86,11 +166,11 @@ spec:
                   name: figma-mcp-core-auth
                   key: FIGMA_RELAY_SERVICE_SECRET
             - name: FIGMA_SHARED_RELAY_URL
-              value: https://figma-account-dev.zivon.ai/sse
+              value: http://figma-mcp.figma-mcp.svc.cluster.local/sse
             - name: FIGMA_SHARED_RELAY_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: figma-mcp-upstream-auth
+                  name: figma-mcp-secrets
                   key: MCP_AUTH_TOKEN
             - name: OTEL_SERVICE_NAME
               value: figma-mcp-multitenant
