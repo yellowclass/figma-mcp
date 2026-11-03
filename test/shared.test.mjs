@@ -91,7 +91,8 @@ test("shared bridge exposes only reviewed file tools and structured writes", asy
     ["get_metadata", "get_design_context", "edit_canvas"],
   );
   for (const tool of listing) {
-    assert.deepEqual(tool.inputSchema.properties.fileKey.enum, [A]);
+    assert.equal(tool.inputSchema.properties.fileKey.enum, undefined);
+    assert.equal(tool.inputSchema.properties.fileKey.pattern, "^[A-Za-z0-9]{22,128}$");
     assert.equal(tool.inputSchema.properties.sessionId, undefined);
   }
   for (const name of [

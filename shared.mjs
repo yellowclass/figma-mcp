@@ -330,6 +330,17 @@ export function createSharedBridge({
         ),
     );
   }
+  // Tool definitions must stay stable as files are created. Agents and EAP
+  // cache/hash schemas; ownership is enforced by call(), never by this hint.
+  function scopedFileSchema(upstream = {}) {
+    const { enum: _enum, const: _const, ...schema } = upstream;
+    return {
+      ...schema,
+      type: "string",
+      pattern: "^[A-Za-z0-9]{22,128}$",
+      description: "Figma file key returned by create_new_file for this organisation. Use the returned key to edit or inspect the new file; the server checks organisation ownership on every call.",
+    };
+  }
   function listing() {
     const bounded = available().map((tool) => ({
       name: tool.name,
@@ -344,7 +355,7 @@ export function createSharedBridge({
             .filter(([key]) => fields[tool.name].includes(key))
             .map(([key, value]) => [
               key,
-              key === "fileKey" ? { ...value, enum: [...allowedFiles] } : value,
+              key === "fileKey" ? scopedFileSchema(value) : value,
             ]),
         ),
         required: (tool.inputSchema.required || []).filter(
@@ -359,7 +370,7 @@ export function createSharedBridge({
           ...canvasTool.inputSchema,
           properties: {
             ...canvasTool.inputSchema.properties,
-            fileKey: { type: "string", enum: [...allowedFiles] },
+            fileKey: scopedFileSchema(),
           },
         },
       });

@@ -129,6 +129,7 @@ test("bridge exposes creation only for configured orgs, then edits the registere
             name: "create_new_file",
             inputSchema: { type: "object", properties: {}, required: [] },
           },
+          { name: "use_figma", inputSchema: { type: "object", properties: {}, required: [] } },
           {
             name: "get_metadata",
             inputSchema: {
@@ -156,11 +157,17 @@ test("bridge exposes creation only for configured orgs, then edits the registere
   });
   await bridge.ready();
   assert(bridge.listing().some((t) => t.name === "create_new_file"));
+  const before = JSON.stringify(bridge.listing());
   await bridge.call("create_new_file", {
     fileName: "New",
     requestId: "request_123",
   });
+  assert.equal(JSON.stringify(bridge.listing()), before, "creating a file must not change cached tool definitions or trigger EAP drift");
   await bridge.call("get_metadata", { fileKey: A });
+  await bridge.call("edit_canvas", {fileKey: A, operations: [{action: "createFrame", ref: "newFrame", properties: {width: 100, height: 100}}]});
+  assert.equal(requests.at(-1).name, "use_figma");
+  assert.equal(requests.at(-1).arguments.fileKey, A);
+  assert.equal(JSON.stringify(bridge.listing()), before);
   await assert.rejects(
     bridge.call("get_metadata", { fileKey: B }),
     /not approved/,

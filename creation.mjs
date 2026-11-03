@@ -10,7 +10,7 @@ export const validDestination = (d) =>
 export const creationTool = {
   name: "create_new_file",
   description:
-    "Create a Figma Design file in this organisation’s approved destination. Use a stable requestId for retries of the same task. Never change the ID to retry an ambiguous failure without inspecting the destination first. The server chooses the team and folder.",
+    "Create a Figma Design file in this organisation’s approved destination. Then use edit_canvas with the returned fileKey to draw in it; get_metadata and get_screenshot inspect the result. Do not substitute an older file. Use a stable requestId for retries of the same task. Never change the ID to retry an ambiguous failure without inspecting the destination first. The server chooses the team and folder.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
