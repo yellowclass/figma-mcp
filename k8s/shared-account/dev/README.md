@@ -13,3 +13,9 @@ Requests follow: dev Envoy → dev policy proxy → private dev account relay �
 5. Reconnect any previously configured dev organisations so stored URLs use the dev host. Verify dev-issued org tokens, creation, canvas edits, metadata and foreign-file rejection. HTTP health alone is insufficient.
 
 Dev and production may use separate authorizations of the same Figma user, or different Figma users, according to the accounts explicitly authorized by operations. Figma seat and folder permissions still apply to the selected dev account.
+
+## Live verification
+
+Deployed application revision `1f89ea6` in both dev deployments. The account relay identifies as developer@ivypods.com with a Full seat in SpeakX Product Design, using a separate dev OAuth client and refresh token. Dev Core has FIGMA_SHARED_RELAY_BASE_URL=https://figma-mcp-dev.zivon.ai in both its persistent AWS source and live configuration, and was restarted.
+
+An existing dev destination was reconnected through the standard org settings flow. Authenticated testing through the public dev org MCP endpoint created a file using real dev Core reservation/registration, edited its canvas, confirmed the new frame through metadata, and rejected an unassigned file key. Public health returned 200; bearerless org access returned 401; the unscoped /sse route returned 404. These checks do not change or bypass Envoy tool approval policies.
