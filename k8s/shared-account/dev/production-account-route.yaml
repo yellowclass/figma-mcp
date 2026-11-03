@@ -1,0 +1,44 @@
+# Apply only to aws-zivon-prod. Dev receives transport access, never OAuth keys.
+# Both this source-IP policy and the account relay's bearer authentication apply.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: figma-account-dev-egress-only
+  namespace: figma-mcp
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: figma-account-dev
+  authorization:
+    defaultAction: Deny
+    rules:
+      - name: dev-nat-only
+        action: Allow
+        principal:
+          clientCIDRs:
+            - 35.154.19.252/32
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: figma-account-dev
+  namespace: figma-mcp
+spec:
+  hostnames:
+    - figma-account-dev.zivon.ai
+  parentRefs:
+    - name: zivon-public
+      namespace: envoy-gateway-system
+      sectionName: https
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: figma-mcp
+          port: 80
+      timeouts:
+        request: 3600s
+        backendRequest: 3600s
