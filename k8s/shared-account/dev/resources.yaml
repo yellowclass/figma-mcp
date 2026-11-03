@@ -1,0 +1,242 @@
+# Fully independent dev policy proxy and private dev account relay.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: figma-mcp
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: figma-mcp-core-auth
+  namespace: figma-mcp
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  target:
+    name: figma-mcp-core-auth
+    creationPolicy: Owner
+  data:
+    - secretKey: FIGMA_RELAY_SERVICE_SECRET
+      remoteRef:
+        key: figma-mcp-core-auth
+        property: FIGMA_RELAY_SERVICE_SECRET
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: figma-mcp-secrets
+  namespace: figma-mcp
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  target:
+    name: figma-mcp-secrets
+    creationPolicy: Owner
+  dataFrom:
+    - extract:
+        key: figma-mcp-secrets
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: figma-mcp
+  namespace: figma-mcp
+  labels:
+    app: figma-mcp
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: figma-mcp
+  template:
+    metadata:
+      labels:
+        app: figma-mcp
+    spec:
+      automountServiceAccountToken: false
+      tolerations:
+        - key: app
+          operator: Equal
+          value: zivon-apps
+          effect: NoSchedule
+      containers:
+        - name: figma-mcp
+          image: 422271169195.dkr.ecr.ap-south-1.amazonaws.com/ivypods/figma-mcp:1f89ea6@sha256:2efeab80783cddb85546665c7ce5f8a4663865c391934c5bed985847d108adf1
+          ports:
+            - name: http
+              containerPort: 3100
+          envFrom:
+            - secretRef:
+                name: figma-mcp-secrets
+          env:
+            - name: PORT
+              value: "3100"
+            - name: NODE_ENV
+              value: production
+            - name: OTEL_SERVICE_NAME
+              value: figma-mcp-account-relay
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: cube.environment=development
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://cubeapm.cubeapm.svc.cluster.local:4318/v1/traces
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://cubeapm.cubeapm.svc.cluster.local:3130/api/metrics/v1/save/otlp
+            - name: OTEL_METRICS_EXPORTER
+              value: otlp
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: figma-mcp
+  namespace: figma-mcp
+spec:
+  selector:
+    app: figma-mcp
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: figma-mcp-multitenant
+  namespace: figma-mcp
+  labels:
+    app: figma-mcp-multitenant
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: figma-mcp-multitenant
+  template:
+    metadata:
+      labels:
+        app: figma-mcp-multitenant
+    spec:
+      automountServiceAccountToken: false
+      tolerations:
+        - key: app
+          operator: Equal
+          value: zivon-apps
+          effect: NoSchedule
+      containers:
+        - name: figma-mcp
+          image: 422271169195.dkr.ecr.ap-south-1.amazonaws.com/ivypods/figma-mcp:1f89ea6@sha256:2efeab80783cddb85546665c7ce5f8a4663865c391934c5bed985847d108adf1
+          ports:
+            - name: http
+              containerPort: 3100
+          env:
+            - name: PORT
+              value: "3100"
+            - name: NODE_ENV
+              value: production
+            - name: CORE_INTERNAL_URL
+              value: http://v2-zivon-core-service.zivon.svc.cluster.local
+            - name: FIGMA_RELAY_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: figma-mcp-core-auth
+                  key: FIGMA_RELAY_SERVICE_SECRET
+            - name: FIGMA_SHARED_RELAY_URL
+              value: http://figma-mcp.figma-mcp.svc.cluster.local/sse
+            - name: FIGMA_SHARED_RELAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: figma-mcp-secrets
+                  key: MCP_AUTH_TOKEN
+            - name: OTEL_SERVICE_NAME
+              value: figma-mcp-multitenant
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: cube.environment=development
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://cubeapm.cubeapm.svc.cluster.local:4318/v1/traces
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://cubeapm.cubeapm.svc.cluster.local:3130/api/metrics/v1/save/otlp
+            - name: OTEL_METRICS_EXPORTER
+              value: otlp
+            - name: OTEL_EXPORTER_OTLP_COMPRESSION
+              value: gzip
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: figma-mcp-multitenant
+  namespace: figma-mcp
+spec:
+  selector:
+    app: figma-mcp-multitenant
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: figma-mcp-dev
+  namespace: figma-mcp
+spec:
+  hostnames:
+    - figma-mcp-dev.zivon.ai
+  parentRefs:
+    - name: zivon-public
+      namespace: envoy-gateway-system
+      sectionName: https
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: figma-mcp-multitenant
+          port: 80
+      timeouts:
+        request: 3600s
+        backendRequest: 3600s
