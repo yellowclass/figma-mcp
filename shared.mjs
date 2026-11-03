@@ -8,6 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { CoreCredentials, HttpError, validSlug } from "./tenants.mjs";
 import { canvasCode, canvasTool } from "./canvas.mjs";
+import { validDestination, creationTool, CreationError } from "./creation.mjs";
 
 // Explicitly reviewed tools and arguments. A newly discovered upstream tool or
 // argument is never automatically admitted. Account/library/code/job tools are
@@ -95,7 +96,8 @@ export class CorePolicies extends CoreCredentials {
     if (
       data.mode !== "shared" ||
       !Array.isArray(data.fileKeys) ||
-      data.fileKeys.length < 1 ||
+      (data.fileKeys.length < 1 && !validDestination(data.destination)) ||
+      (data.destination != null && !validDestination(data.destination)) ||
       data.fileKeys.length > 200 ||
       !data.fileKeys.every(
         (key) => typeof key === "string" && fileKeyPattern.test(key),
@@ -107,13 +109,45 @@ export class CorePolicies extends CoreCredentials {
     return {
       fileKeys: [...new Set(data.fileKeys)].sort(),
       revision: data.revision,
+      ...(data.destination ? { destination: data.destination } : {}),
     };
+  }
+  async creation(slug, token, body) {
+    if (!validSlug(slug)) throw new HttpError(400, "Invalid org slug");
+    let r;
+    try {
+      r = await this.fetch(
+        `${this.baseUrl}/internal/orgs/${slug}/figma-creation`,
+        {
+          method: "POST",
+          redirect: "error",
+          signal: AbortSignal.timeout(15000),
+          headers: {
+            "Content-Type": "application/json",
+            "X-Internal-Secret": this.serviceSecret,
+            "X-Figma-Relay-Token": token,
+          },
+          body: JSON.stringify(body),
+        },
+      );
+    } catch {
+      throw new CreationError(
+        "Creation service unavailable; preserve the request ID and inspect the destination before retrying",
+      );
+    }
+    if (!r.ok)
+      throw new CreationError(
+        `Creation registration HTTP ${r.status}; preserve the request ID and inspect the destination before retrying`,
+      );
+    return r.json();
   }
 }
 
 function policyHash(policy) {
   return createHash("sha256")
-    .update(JSON.stringify([policy.revision, policy.fileKeys]))
+    .update(
+      JSON.stringify([policy.revision, policy.fileKeys, policy.destination]),
+    )
     .digest("hex");
 }
 export class SharedRegistry {
@@ -129,9 +163,26 @@ export class SharedRegistry {
   async resolve(slug, token) {
     const policy = await this.core.get(slug, token);
     let entry = this.entries.get(slug);
-    if (entry && policyHash(entry.policy) !== policyHash(policy)) {
+    const credentialHash = createHash("sha256").update(token).digest("hex");
+    if (entry && entry.credentialHash !== credentialHash) {
       void entry.bridge.close();
+      this.entries.delete(slug);
       entry = null;
+    }
+    if (entry && policyHash(entry.policy) !== policyHash(policy)) {
+      if (
+        JSON.stringify(entry.policy.destination) ===
+          JSON.stringify(policy.destination) &&
+        policy.fileKeys.length > entry.policy.fileKeys.length &&
+        entry.policy.fileKeys.every((k) => policy.fileKeys.includes(k)) &&
+        entry.bridge.updatePolicy
+      ) {
+        entry.bridge.updatePolicy(policy);
+        entry.policy = policy;
+      } else {
+        void entry.bridge.close();
+        entry = null;
+      }
     }
     if (!entry) {
       this.sweep();
@@ -139,7 +190,8 @@ export class SharedRegistry {
         throw new HttpError(503, "Figma connection capacity reached");
       entry = {
         policy,
-        bridge: this.createBridge(policy),
+        credentialHash,
+        bridge: this.createBridge(policy, { slug, token }),
         users: 0,
         lastUsed: Date.now(),
       };
@@ -218,6 +270,7 @@ export function createSharedBridge({
   upstreamUrl,
   upstreamToken,
   connect,
+  createFile,
 }) {
   const allowedFiles = new Set(policy.fileKeys);
   let client,
@@ -310,6 +363,12 @@ export function createSharedBridge({
           },
         },
       });
+    if (
+      validDestination(policy.destination) &&
+      createFile &&
+      tools.some((t) => t.name === "create_new_file")
+    )
+      bounded.push(creationTool);
     return bounded;
   }
   async function fileSession(key) {
@@ -349,6 +408,22 @@ export function createSharedBridge({
   }
   async function call(name, args) {
     await ready();
+    if (name === "create_new_file") {
+      if (
+        !validDestination(policy.destination) ||
+        !createFile ||
+        !tools.some((t) => t.name === "create_new_file")
+      )
+        throw new SharedPolicyError(
+          "File creation is unavailable: no approved destination for this organisation",
+        );
+      const result = await createFile(args, (request) =>
+        client.callTool(request),
+      );
+      if (result.structuredContent?.fileKey)
+        allowedFiles.add(result.structuredContent.fileKey);
+      return result;
+    }
     if (
       !args ||
       typeof args.fileKey !== "string" ||
@@ -428,7 +503,8 @@ export function createSharedBridge({
             {
               type: "text",
               text:
-                error instanceof SharedPolicyError
+                error instanceof SharedPolicyError ||
+                error instanceof CreationError
                   ? error.message
                   : "Figma operation failed; reconnect and inspect the file before retrying.",
             },
@@ -443,6 +519,9 @@ export function createSharedBridge({
     createServer,
     call,
     listing,
+    updatePolicy(next) {
+      for (const key of next.fileKeys) allowedFiles.add(key);
+    },
     async close() {
       closed = true;
       if (connecting) await connecting.catch(() => {});
